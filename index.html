@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Task Manager</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.7/dist/axios.min.js"></script>
+    <style>
+        /* ... (CSS styles remain the same) ... */
+    </style>
+</head>
+<body>
+    <div id="app">
+        <h1>Mixtral AI Assistant</h1>
+        <div>
+            <label for="task-name">Task Name:</label>
+            <input type="text" id="task-name" v-model="taskName">
+        </div>
+        <div class="conversation">
+            <div v-for="message in conversation" :key="message.id">
+                <strong>{{ message.role }}:</strong> {{ message.content }}
+            </div>
+        </div>
+        <div class="user-input">
+            <input type="text" v-model="userInput" placeholder="Enter your message" @keyup.enter="sendMessage">
+            <button @click="sendMessage">Send</button>
+        </div>
+        <div class="response">
+            <strong>Mixtral:</strong> {{ mixtralResponse.response_to_user }}
+        </div>
+        <div class="questions">
+            <h3>Questions for User:</h3>
+            <ul>
+                <li v-for="question in mixtralResponse.questions_for_user.split('\n')" :key="question">
+                    {{ question }}
+                </li>
+            </ul>
+        </div>
+        <div class="tasks">
+            <h3>Tasks:</h3>
+            <ul>
+                <li v-for="task in mixtralResponse.tasks.split('\n')" :key="task">
+                    {{ task }}
+                </li>
+            </ul>
+        </div>
+    </div>
+    <script>
+        const app = Vue.createApp({
+            data() {
+                return {
+                    taskName: '',
+                    userInput: '',
+                    conversation: [],
+                    mixtralResponse: {
+                        response_to_user: '',
+                        questions_for_user: '',
+                        tasks: ''
+                    }
+                };
+            },
+            methods: {
+                async sendMessage() {
+                    if (this.userInput.trim() !== '') {
+                        const taskId = this.conversation.length + 1;
+                        this.conversation.push({ id: taskId, role: 'User', content: this.userInput });
+
+                        try {
+                            const response = await axios.post('/process', {
+                                task_id: taskId,
+                                user_input: this.userInput
+                            });
+
+                            if (response.data.response_file_path) {
+                                const responseData = await this.readResponseFile(response.data.response_file_path);
+                                this.conversation.push({ id: taskId, role: 'Mixtral', content: responseData.response_to_user });
+                                this.mixtralResponse = responseData;
+                                this.userInput = '';
+                            } else {
+                                console.error('Error: Response file path is null');
+                            }
+                        } catch (error) {
+                            console.error(error);
+                        }
+                    }
+                },
+
+                async readResponseFile(filePath) {
+                    try {
+                        const response = await axios.get(`/response?file_path=${encodeURIComponent(filePath)}`);
+                        return response.data;
+                    } catch (error) {
+                        console.error(error);
+                        return null;
+                    }
+                }
+            }
+        });
+
+        app.mount('#app');
+    </script>
+</body>
+</html>
