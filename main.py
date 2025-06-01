@@ -8,14 +8,18 @@ from typing import List
 import os
 import re
 import time
+import glob
 import random
-import csv
 import xml.etree.ElementTree as ET
+import uuid
 from apis.openai import OpenAIModel
 from apis.claude_3 import Claude3
 from apis.perplexity import PerplexityModel
 from apis.gemini import GeminiModel
 from apis.local import LocalModel
+
+# Global variable for provider selection
+SELECTED_PROVIDER = os.environ.get("AI_PROVIDER", "local").lower() # Defaults to "local"
 
 app = FastAPI()
 
@@ -93,7 +97,17 @@ class TaskFile:
 
 class Mixtral:
     def __init__(self):
-        self.local_model = LocalModel()
+        self.local_model = LocalModel() # Keep for local wizard if nothing else
+        self.openai_model = None
+        if SELECTED_PROVIDER == "openai":
+            if os.environ.get("OPENAI_API_KEY"):
+                self.openai_model = OpenAIModel()
+                print("Using OpenAI provider.")
+            else:
+                print("OPENAI_API_KEY not set. Falling back to local provider for Mixtral.")
+                # Fallback to local if key is missing, or handle error
+        else:
+            print("Using local provider for Mixtral.")
         self.wizard_queue = []
 
     def process_task(self, task_id, user_input):
@@ -105,12 +119,7 @@ class Mixtral:
         task_file.add_element("mixtral_response", mixtral_response)
         task_file.save()
 
-        # Write the formatted response to a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_file:
-            json.dump(mixtral_response, temp_file)
-            response_file_path = temp_file.name
-
-        return response_file_path
+        return mixtral_response
 
     def phase_one(self, user_input, task_id):
         global request_count, token_count
@@ -126,10 +135,22 @@ class Mixtral:
             self.wait_for_rate_limit()
 
             messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": refined_input}]
-            mixtral_response = self.local_model.process_local_model("mixtral-8x7b-local", messages, 0.5, 100)
 
+            mixtral_response_content = ""
             input_tokens = 0
             output_tokens = 0
+
+            if SELECTED_PROVIDER == "openai" and self.openai_model:
+                # Assuming you have a default OpenAI model name, e.g., "gpt-3.5-turbo-0125"
+                # This model name should ideally come from config.json or be a parameter
+                openai_model_name_key = "gpt-3.5-turbo-0125" # This is a key in apis/config.json for OpenAI
+                mixtral_response_content, input_tokens, output_tokens = self.openai_model.process_openai_model(
+                    openai_model_name_key, messages, 0.5, 100 # Max tokens might need adjustment
+                )
+            else: # Default or fallback to local
+                mixtral_response_content, input_tokens, output_tokens = self.local_model.process_local_model(
+                    "mixtral-8x7b-local", messages, 0.5, 100
+                )
 
             request_count += 1
             token_count += input_tokens + output_tokens
@@ -137,15 +158,15 @@ class Mixtral:
             total_output_tokens += output_tokens
 
             print(f"Iteration {i + 1} - Model output received:")
-            print(mixtral_response)
+            print(mixtral_response_content)
             print()
 
-            questions_from_user = self.extract_questions_for_user(mixtral_response)
+            questions_from_user = self.extract_questions_for_user(mixtral_response_content)
             if questions_from_user and (i == MAX_ITERATIONS // 2 - 1 or i == MAX_ITERATIONS - 1):
                 self.pause_for_questions(questions_from_user)
 
-            if "<internal_monologue>" in mixtral_response:
-                internal_monologue = self.extract_internal_monologue(mixtral_response)
+            if "<internal_monologue>" in mixtral_response_content:
+                internal_monologue = self.extract_internal_monologue(mixtral_response_content)
             else:
                 internal_monologue = ""
 
@@ -161,7 +182,7 @@ class Mixtral:
                 short_memory.append(internal_monologue)
 
             system_prompt = self.analyze_and_refine_prompt(internal_monologue, system_prompt)
-            refined_input = mixtral_response
+            refined_input = mixtral_response_content
 
             if (i + 1) % DELAY_AFTER_REQUESTS == 0:
                 print(f"Pausing for {DELAY_DURATION} seconds after {DELAY_AFTER_REQUESTS} requests...")
@@ -171,8 +192,9 @@ class Mixtral:
         while self.wizard_queue:
             wizard_task = self.wizard_queue.pop(0)
             wizard_messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": wizard_task}]
-            wizard_response = self.local_model.process_local_model("WizardCoder-17b", wizard_messages, 0.5, 100)
-            refined_input += f"\nWizard response: {wizard_response}"
+            wizard_response_content, wizard_input_tokens, wizard_output_tokens = self.local_model.process_local_model("WizardCoder-17b", wizard_messages, 0.5, 100)
+            token_count += wizard_input_tokens + wizard_output_tokens # Update token count
+            refined_input += f"\nWizard response: {wizard_response_content}"
 
         return self.format_response(refined_input)
     def format_response(self, response):
@@ -299,17 +321,26 @@ async def serve_html():
 @app.post("/process")
 async def process_input(input_data: InputData):
     try:
-        mixtral_response = mixtral.process_task(input_data.task_id, input_data.user_input)
-        return {"message": mixtral_response}
+        server_task_id = str(uuid.uuid4())
+        mixtral_ai_response = mixtral.process_task(server_task_id, input_data.user_input)
+
+        # Create a new dictionary for the response payload
+        response_payload = mixtral_ai_response.copy() # Start with the AI's structured response
+        response_payload["task_id"] = server_task_id # Add the server-generated task_id
+
+        return response_payload
     except Exception as e:
         print(f"Error processing task: {str(e)}")
         return {"message": "An error occurred while processing the task."}
 
 @app.get("/task-history")
 async def get_task_history():
-    tasks = [
-        {"id": 1},
-        {"id": 2},
-        {"id": 3}
-    ]
+    tasks = []
+    for filename in glob.glob("task_*.xml"):
+        try:
+            task_id = filename.replace("task_", "").replace(".xml", "")
+            tasks.append({"id": task_id})
+        except Exception as e:
+            # Log error or handle cases where filename might not be as expected
+            print(f"Error processing filename {filename}: {e}")
     return {"tasks": tasks}
