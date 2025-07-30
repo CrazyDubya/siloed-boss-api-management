@@ -24,4 +24,9 @@ class GeminiModel:
             generation_config=generation_config
         )
 
-        return response.text
+        content = response.text
+        # Gemini doesn't provide token usage by default, estimate
+        input_tokens = len(prompt.split()) * 1.3  # rough estimation
+        output_tokens = len(content.split()) * 1.3  # rough estimation
+        
+        return content, int(input_tokens), int(output_tokens)
