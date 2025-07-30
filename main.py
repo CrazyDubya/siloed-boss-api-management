@@ -1,25 +1,20 @@
 # main.py
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
 import os
-import re
 import time
 import glob
 import random
 import xml.etree.ElementTree as ET
 import uuid
 from apis.openai import OpenAIModel
-from apis.claude_3 import Claude3
-from apis.perplexity import PerplexityModel
-from apis.gemini import GeminiModel
 from apis.local import LocalModel
 
 # Global variable for provider selection
-SELECTED_PROVIDER = os.environ.get("AI_PROVIDER", "local").lower() # Defaults to "local"
+SELECTED_PROVIDER = os.environ.get("AI_PROVIDER", "local").lower()  # Defaults to "local"
 
 app = FastAPI()
 
@@ -99,15 +94,23 @@ class Mixtral:
     def __init__(self):
         self.local_model = LocalModel() # Keep for local wizard if nothing else
         self.openai_model = None
-        if SELECTED_PROVIDER == "openai":
-            if os.environ.get("OPENAI_API_KEY"):
-                self.openai_model = OpenAIModel()
-                print("Using OpenAI provider.")
+        
+        # Initialize the selected provider with proper error handling
+        try:
+            if SELECTED_PROVIDER == "openai":
+                api_key = os.environ.get("OPENAI_API_KEY")
+                if not api_key:
+                    print("Warning: OPENAI_API_KEY not set. Falling back to local provider for Mixtral.")
+                    print("Using local provider for Mixtral.")
+                else:
+                    self.openai_model = OpenAIModel()
+                    print("Using OpenAI provider.")
             else:
-                print("OPENAI_API_KEY not set. Falling back to local provider for Mixtral.")
-                # Fallback to local if key is missing, or handle error
-        else:
-            print("Using local provider for Mixtral.")
+                print("Using local provider for Mixtral.")
+        except Exception as e:
+            print(f"Error initializing provider {SELECTED_PROVIDER}: {e}")
+            print("Falling back to local provider.")
+            
         self.wizard_queue = []
 
     def process_task(self, task_id, user_input):
@@ -191,9 +194,11 @@ class Mixtral:
         # Process wizard tasks from the queue
         while self.wizard_queue:
             wizard_task = self.wizard_queue.pop(0)
-            wizard_messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": wizard_task}]
-            wizard_response_content, wizard_input_tokens, wizard_output_tokens = self.local_model.process_local_model("WizardCoder-17b", wizard_messages, 0.5, 100)
-            token_count += wizard_input_tokens + wizard_output_tokens # Update token count
+            wizard_messages = [{"role": "system", "content": SYSTEM_PROMPT_WIZARD}, 
+                              {"role": "user", "content": wizard_task}]
+            wizard_response_content, wizard_input_tokens, wizard_output_tokens = self.local_model.process_local_model(
+                "WizardCoder-17b", wizard_messages, 0.5, 100)
+            token_count += wizard_input_tokens + wizard_output_tokens  # Update token count
             refined_input += f"\nWizard response: {wizard_response_content}"
 
         return self.format_response(refined_input)
@@ -314,9 +319,23 @@ class InputData(BaseModel):
 @app.get("/")
 @app.get("/index.html")
 async def serve_html():
-    with open("index.html", "r") as file:
-        html_content = file.read()
-    return HTMLResponse(content=html_content, status_code=200)
+    try:
+        with open("index.html", "r") as file:
+            html_content = file.read()
+        return HTMLResponse(content=html_content, status_code=200)
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>SiloedBoss API Management</h1><p>Web interface not found.</p>", status_code=404)
+    except Exception as e:
+        return HTMLResponse(content=f"<h1>Error</h1><p>Failed to load interface: {str(e)}</p>", status_code=500)
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for deployment monitoring."""
+    return {
+        "status": "healthy",
+        "provider": SELECTED_PROVIDER,
+        "timestamp": time.time()
+    }
 
 @app.post("/process")
 async def process_input(input_data: InputData):
