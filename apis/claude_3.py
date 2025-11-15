@@ -20,4 +20,8 @@ class Claude3:
             messages=[{"role": "user", "content": refined_input}]
         )
 
-        return response.content[0].text
+        content = response.content[0].text
+        input_tokens = getattr(response.usage, 'input_tokens', 0)
+        output_tokens = getattr(response.usage, 'output_tokens', 0)
+        
+        return content, input_tokens, output_tokens

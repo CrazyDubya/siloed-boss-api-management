@@ -17,4 +17,12 @@ class LocalModel:
             temperature=temperature,
             max_tokens=max_tokens
         )
-        return response.choices[0].message.content
+        response_text = response.choices[0].message.content
+
+        input_tokens_estimation = 0
+        for message in messages:
+            input_tokens_estimation += len(message.get("content", ""))
+
+        output_tokens_estimation = len(response_text)
+
+        return response_text, input_tokens_estimation, output_tokens_estimation

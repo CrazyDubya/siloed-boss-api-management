@@ -70,27 +70,22 @@
                                 user_input: this.userInput
                             });
 
-                            if (response.data.response_file_path) {
-                                const responseData = await this.readResponseFile(response.data.response_file_path);
-                                this.conversation.push({ id: taskId, role: 'Mixtral', content: responseData.response_to_user });
-                                this.mixtralResponse = responseData;
-                                this.userInput = '';
-                            } else {
-                                console.error('Error: Response file path is null');
-                            }
+                            const responseData = response.data;
+                            this.conversation.push({
+                                id: taskId, // Client-side key for Vue
+                                role: 'Mixtral',
+                                content: responseData.response_to_user,
+                                server_task_id: responseData.task_id // Store server task_id
+                            });
+                            // Populate mixtralResponse with only the expected fields for UI binding
+                            this.mixtralResponse.response_to_user = responseData.response_to_user;
+                            this.mixtralResponse.questions_for_user = responseData.questions_for_user;
+                            this.mixtralResponse.tasks = responseData.tasks;
+                            console.log("Task processed with server ID:", responseData.task_id);
+                            this.userInput = '';
                         } catch (error) {
                             console.error(error);
                         }
-                    }
-                },
-
-                async readResponseFile(filePath) {
-                    try {
-                        const response = await axios.get(`/response?file_path=${encodeURIComponent(filePath)}`);
-                        return response.data;
-                    } catch (error) {
-                        console.error(error);
-                        return null;
                     }
                 }
             }

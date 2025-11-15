@@ -18,5 +18,7 @@ class OpenAIModel:
             temperature=temperature,
             max_tokens=max_tokens
         )
-
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        return content, prompt_tokens, completion_tokens

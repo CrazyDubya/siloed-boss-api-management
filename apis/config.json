@@ -64,7 +64,7 @@
       "cost": "$",
       "port": 8081
     }
-     },
+  },
   "GEMINI_MODELS": {
     "gemini-pro": {
       "name": "gemini-pro",
